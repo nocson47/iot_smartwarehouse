@@ -330,6 +330,17 @@ func (s *Server) serveStatic() {
 }
 
 func (s *Server) apiPublish(w http.ResponseWriter, r *http.Request) {
+	// 🔐 Verify Bearer token
+	authToken := r.Header.Get("Authorization")
+	if len(authToken) > 7 && authToken[:7] == "Bearer " {
+		authToken = authToken[7:]
+	}
+	userID := s.getUserFromToken(authToken)
+	if userID == 0 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var p struct {
 		Topic   string `json:"topic"`
 		Payload string `json:"payload"`
@@ -349,6 +360,17 @@ func (s *Server) apiPublish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiReadings(w http.ResponseWriter, r *http.Request) {
+	// 🔐 Verify Bearer token
+	token := r.Header.Get("Authorization")
+	if len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+	userID := s.getUserFromToken(token)
+	if userID == 0 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	q := r.URL.Query().Get("limit")
 	limit := 100
 	if q != "" {
@@ -394,6 +416,17 @@ func (s *Server) saveMotionLog(device, eventType, message string) error {
 }
 
 func (s *Server) apiMotionLogs(w http.ResponseWriter, r *http.Request) {
+	// 🔐 Verify Bearer token
+	token := r.Header.Get("Authorization")
+	if len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+	userID := s.getUserFromToken(token)
+	if userID == 0 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	q := r.URL.Query().Get("limit")
 	limit := 100
 	if q != "" {
