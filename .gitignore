@@ -1,0 +1,97 @@
+# Environment files (contain secrets) 🔐
+.env
+.env.local
+.env.*.local
+.env.production.local
+!.env.example
+
+# Sensitive files
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+secrets/
+credentials/
+passwd
+mosquitto/passwd
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data.db
+pg_data/
+
+# IDE
+.idea/
+.vscode/
+.vscode-settings/
+*.swp
+*.swo
+*.code-workspace
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+
+# Build outputs
+*.exe
+*.out
+*.o
+server
+/out/
+dist/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+.pnpm-debug.log*
+
+# Node modules & package managers
+node_modules/
+.pnpm-store/
+dist/
+build/
+
+# Go
+vendor/
+*.test
+*.prof
+
+# Next.js
+frontend/my-app/.next/
+frontend/my-app/out/
+frontend/my-app/node_modules/
+frontend/my-app/.turbo/
+
+# Docker
+*.tar
+docker-compose.override.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+venv/
+env/
+
+# macOS specific
+.AppleDouble
+.LSOverride
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
