@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/smtp"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -34,6 +36,10 @@ type Reading struct {
 	Motion       *bool    `json:"motion,omitempty"`
 	Relay        *bool    `json:"relay,omitempty"`
 	Door         *bool    `json:"door,omitempty"`
+	Led1         *bool    `json:"led1,omitempty"`
+	Led2         *bool    `json:"led2,omitempty"`
+	Led3         *bool    `json:"led3,omitempty"`
+	Led4         *bool    `json:"led4,omitempty"`
 	AlertType    string   `json:"alertType,omitempty"`
 	AlertMessage string   `json:"alertMessage,omitempty"`
 	Ts           string   `json:"ts"`
@@ -53,6 +59,12 @@ type DeviceStatus struct {
 	LastUpdate string   `json:"last_update"`
 	Temp       *float64 `json:"temp,omitempty"`
 	Hum        *float64 `json:"hum,omitempty"`
+	Relay      *bool    `json:"relay,omitempty"`
+	Door       *bool    `json:"door,omitempty"`
+	Led1       *bool    `json:"led1,omitempty"`
+	Led2       *bool    `json:"led2,omitempty"`
+	Led3       *bool    `json:"led3,omitempty"`
+	Led4       *bool    `json:"led4,omitempty"`
 }
 
 type StatusMessage struct {
@@ -200,6 +212,10 @@ func (s *Server) saveReading(topic, payload string) (*Reading, error) {
 	var motion *bool
 	var relay *bool
 	var door *bool
+	var led1 *bool
+	var led2 *bool
+	var led3 *bool
+	var led4 *bool
 	var alertType string
 	var alertMessage string
 
@@ -226,6 +242,18 @@ func (s *Server) saveReading(topic, payload string) (*Reading, error) {
 		}
 		if v, ok := m["door"].(bool); ok {
 			door = &v
+		}
+		if v, ok := m["led1"].(bool); ok {
+			led1 = &v
+		}
+		if v, ok := m["led2"].(bool); ok {
+			led2 = &v
+		}
+		if v, ok := m["led3"].(bool); ok {
+			led3 = &v
+		}
+		if v, ok := m["led4"].(bool); ok {
+			led4 = &v
 		}
 		if v, ok := m["type"].(string); ok {
 			alertType = v
@@ -254,6 +282,10 @@ func (s *Server) saveReading(topic, payload string) (*Reading, error) {
 		Motion:       motion,
 		Relay:        relay,
 		Door:         door,
+		Led1:         led1,
+		Led2:         led2,
+		Led3:         led3,
+		Led4:         led4,
 		AlertType:    alertType,
 		AlertMessage: alertMessage,
 		Ts:           ts,
@@ -298,6 +330,54 @@ func (s *Server) broadcastStatus() {
 			delete(s.clients, c)
 		}
 	}
+}
+
+// sendTelegram sends a simple message to the configured Telegram chat if env vars are set.
+func (s *Server) sendTelegram(text string) error {
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	chat := os.Getenv("TELEGRAM_CHAT_ID")
+	if token == "" || chat == "" {
+		// not configured
+		return nil
+	}
+	urlStr := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
+	data := url.Values{}
+	data.Set("chat_id", chat)
+	data.Set("text", text)
+	resp, err := http.PostForm(urlStr, data)
+	if err != nil {
+		log.Println("telegram post error:", err)
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		log.Println("telegram send non-200:", resp.Status)
+	}
+	return nil
+}
+
+// sendEmail sends a basic plain-text email using SMTP (MailHog compatible).
+func (s *Server) sendEmail(subject, body string) error {
+	smtpHost := os.Getenv("SMTP_HOST") // e.g. mailhog:1025
+	from := os.Getenv("SMTP_FROM")
+	to := os.Getenv("ALERT_EMAIL")
+	if to == "" {
+		to = from
+	}
+	if smtpHost == "" || from == "" || to == "" {
+		return nil
+	}
+	msg := "From: " + from + "\r\n" +
+		"To: " + to + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=\"utf-8\"\r\n" +
+		"\r\n" + body
+	if err := smtp.SendMail(smtpHost, nil, from, []string{to}, []byte(msg)); err != nil {
+		log.Println("sendEmail error:", err)
+		return err
+	}
+	return nil
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -460,17 +540,153 @@ func (s *Server) mqttOnMessage(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Update device status
+	// Update device status and notify on relay/door changes
 	if rd.Device != "" {
 		s.deviceMu.Lock()
+		prev := s.deviceStatuses[rd.Device]
+
+		// set new status
 		s.deviceStatuses[rd.Device] = &DeviceStatus{
 			Device:     rd.Device,
 			Online:     true,
 			LastUpdate: rd.Ts,
 			Temp:       rd.Temp,
 			Hum:        rd.Hum,
+			Relay:      rd.Relay,
+			Door:       rd.Door,
+			Led1:       rd.Led1,
+			Led2:       rd.Led2,
+			Led3:       rd.Led3,
+			Led4:       rd.Led4,
 		}
 		s.deviceMu.Unlock()
+
+		// Compare previous state and send Telegram notifications for changes
+		if prev != nil {
+			// Relay change
+			if prev.Relay == nil && rd.Relay != nil {
+				if *rd.Relay {
+					s.sendTelegram(fmt.Sprintf("[%s] Relay turned ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Relay ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: Relay turned ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] Relay turned OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Relay OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: Relay turned OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			} else if prev.Relay != nil && rd.Relay != nil && *prev.Relay != *rd.Relay {
+				if *rd.Relay {
+					s.sendTelegram(fmt.Sprintf("[%s] Relay turned ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Relay ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: Relay turned ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] Relay turned OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Relay OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: Relay turned OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			}
+
+			// Door change
+			if prev.Door == nil && rd.Door != nil {
+				if *rd.Door {
+					s.sendTelegram(fmt.Sprintf("[%s] Door OPENED", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Door OPENED", rd.Device), fmt.Sprintf("Device: %s\nEvent: Door OPENED\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] Door CLOSED", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Door CLOSED", rd.Device), fmt.Sprintf("Device: %s\nEvent: Door CLOSED\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			} else if prev.Door != nil && rd.Door != nil && *prev.Door != *rd.Door {
+				if *rd.Door {
+					s.sendTelegram(fmt.Sprintf("[%s] Door OPENED", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Door OPENED", rd.Device), fmt.Sprintf("Device: %s\nEvent: Door OPENED\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] Door CLOSED", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] Door CLOSED", rd.Device), fmt.Sprintf("Device: %s\nEvent: Door CLOSED\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			}
+
+			// LED changes (1-4)
+			if prev.Led1 == nil && rd.Led1 != nil {
+				if *rd.Led1 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED1 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED1 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED1 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED1 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED1 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED1 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			} else if prev.Led1 != nil && rd.Led1 != nil && *prev.Led1 != *rd.Led1 {
+				if *rd.Led1 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED1 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED1 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED1 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED1 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED1 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED1 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			}
+			if prev.Led2 == nil && rd.Led2 != nil {
+				if *rd.Led2 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED2 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED2 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED2 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED2 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED2 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED2 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			} else if prev.Led2 != nil && rd.Led2 != nil && *prev.Led2 != *rd.Led2 {
+				if *rd.Led2 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED2 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED2 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED2 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED2 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED2 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED2 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			}
+			if prev.Led3 == nil && rd.Led3 != nil {
+				if *rd.Led3 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED3 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED3 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED3 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED3 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED3 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED3 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			} else if prev.Led3 != nil && rd.Led3 != nil && *prev.Led3 != *rd.Led3 {
+				if *rd.Led3 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED3 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED3 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED3 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED3 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED3 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED3 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			}
+			if prev.Led4 == nil && rd.Led4 != nil {
+				if *rd.Led4 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED4 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED4 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED4 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED4 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED4 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED4 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			} else if prev.Led4 != nil && rd.Led4 != nil && *prev.Led4 != *rd.Led4 {
+				if *rd.Led4 {
+					s.sendTelegram(fmt.Sprintf("[%s] LED4 ON", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED4 ON", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED4 ON\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] LED4 OFF", rd.Device))
+					s.sendEmail(fmt.Sprintf("[%s] LED4 OFF", rd.Device), fmt.Sprintf("Device: %s\nEvent: LED4 OFF\nTime: %s\nPayload: %s", rd.Device, rd.Ts, payload))
+				}
+			}
+		} else {
+			// No previous status: optionally announce initial states
+			if rd.Relay != nil {
+				if *rd.Relay {
+					s.sendTelegram(fmt.Sprintf("[%s] Relay is ON", rd.Device))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] Relay is OFF", rd.Device))
+				}
+			}
+			if rd.Door != nil {
+				if *rd.Door {
+					s.sendTelegram(fmt.Sprintf("[%s] Door is OPEN", rd.Device))
+				} else {
+					s.sendTelegram(fmt.Sprintf("[%s] Door is CLOSED", rd.Device))
+				}
+			}
+		}
 	}
 
 	// Save motion log if motion detected
@@ -551,6 +767,28 @@ func main() {
 	s.serveStatic()
 	http.HandleFunc("/ws", s.handleWS)
 	http.HandleFunc("/api/publish", s.apiPublish)
+	// Test endpoint to send a Telegram message (no auth) - use only for quick testing
+	http.HandleFunc("/api/test-telegram", func(w http.ResponseWriter, r *http.Request) {
+		msg := r.URL.Query().Get("text")
+		if msg == "" && r.Method == "POST" {
+			var p struct {
+				Text string `json:"text"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			msg = p.Text
+		}
+		if msg == "" {
+			http.Error(w, "text required", http.StatusBadRequest)
+			return
+		}
+		if err := s.sendTelegram(msg); err != nil {
+			log.Println("test telegram send failed:", err)
+			http.Error(w, "send failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
 	http.HandleFunc("/api/readings", s.apiReadings)
 	http.HandleFunc("/api/logs", s.apiMotionLogs)
 	// Auth endpoints

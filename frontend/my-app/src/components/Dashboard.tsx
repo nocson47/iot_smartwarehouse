@@ -55,7 +55,6 @@ interface DeviceState {
   led2: boolean;
   led3: boolean;
   led4: boolean;
-  buzzer: boolean;
   lastUpdate: string;
 }
 
@@ -90,7 +89,6 @@ export function Dashboard({ email, onLogout }: DashboardProps) {
     led2: false,
     led3: false,
     led4: false,
-    buzzer: false,
     lastUpdate: '',
   });
 
@@ -215,8 +213,6 @@ export function Dashboard({ email, onLogout }: DashboardProps) {
       
       if (actuator.startsWith('led')) {
         setDeviceState((prev) => ({ ...prev, [actuator]: isOn }));
-      } else if (actuator === 'buzzer') {
-        setDeviceState((prev) => ({ ...prev, buzzer: isOn }));
       } else if (actuator === 'relay') {
         setDeviceState((prev) => ({ ...prev, relay: isOn }));
       } else if (actuator === 'door') {
@@ -497,7 +493,7 @@ export function Dashboard({ email, onLogout }: DashboardProps) {
         </div>
 
         {/* Controls Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
           {/* Relay */}
           <div className="bg-slate-800 border border-slate-700 p-6">
             <div className="flex items-center justify-between mb-4">
@@ -517,7 +513,7 @@ export function Dashboard({ email, onLogout }: DashboardProps) {
           {/* Door */}
           <div className="bg-slate-800 border border-slate-700 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium uppercase tracking-wider">Door Servo</h3>
+              <h3 className="text-sm font-medium uppercase tracking-wider">Door</h3>
               <div className={`w-2 h-2 rounded-full ${deviceState.door ? 'bg-emerald-500' : 'bg-slate-600'}`} />
             </div>
             <div className="flex gap-2">
@@ -530,25 +526,6 @@ export function Dashboard({ email, onLogout }: DashboardProps) {
             </div>
           </div>
 
-          {/* Buzzer */}
-          <div className="bg-slate-800 border border-slate-700 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium uppercase tracking-wider">Buzzer</h3>
-              <div className={`w-2 h-2 rounded-full ${deviceState.buzzer ? 'bg-red-500 animate-pulse' : 'bg-slate-600'}`} />
-            </div>
-            <div className="flex gap-2">
-              <ControlButton active={deviceState.buzzer} onClick={() => handlePublish(`actuators/${selectedDevice}/buzzer`, 'ON')}>
-                ON
-              </ControlButton>
-              <ControlButton active={!deviceState.buzzer} onClick={() => handlePublish(`actuators/${selectedDevice}/buzzer`, 'OFF')}>
-                OFF
-              </ControlButton>
-            </div>
-          </div>
-        </div>
-
-        {/* LED + Servo Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* LEDs */}
           <div className="bg-slate-800 border border-slate-700 p-6">
             <h3 className="text-sm font-medium uppercase tracking-wider mb-4">LED Controls</h3>
@@ -571,35 +548,6 @@ export function Dashboard({ email, onLogout }: DashboardProps) {
                   </button>
                 );
               })}
-            </div>
-          </div>
-
-          {/* Servo */}
-          <div className="bg-slate-800 border border-slate-700 p-6">
-            <h3 className="text-sm font-medium uppercase tracking-wider mb-4">Servo Angle</h3>
-            <div className="flex items-center gap-4">
-              <input
-                type="range"
-                min="0"
-                max="180"
-                defaultValue="0"
-                id="servoAngle"
-                className="flex-1 h-2 bg-slate-700 appearance-none cursor-pointer accent-emerald-500"
-                onChange={(e) => {
-                  const label = document.getElementById('servoLabel');
-                  if (label) label.textContent = e.target.value + '°';
-                }}
-              />
-              <span id="servoLabel" className="w-12 text-center font-mono text-lg">0°</span>
-              <button
-                onClick={() => {
-                  const angle = (document.getElementById('servoAngle') as HTMLInputElement)?.value;
-                  handlePublish(`actuators/${selectedDevice}/servo`, angle);
-                }}
-                className="px-6 py-2 bg-emerald-600 text-white text-xs font-semibold uppercase tracking-wider hover:bg-emerald-500 transition-colors"
-              >
-                Set
-              </button>
             </div>
           </div>
         </div>
