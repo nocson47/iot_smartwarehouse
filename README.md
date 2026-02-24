@@ -688,5 +688,5 @@ git clone <repo>
 docker compose up -d
 \`\`\`
 
-Done! Dashboard สามารถเข้าถึงได้ที่ http://localhost:3000
-
+Done! Dashboard สามารถเข้าถึงได้ที่ http://localhost:3000 หรือ url ของคุณ
+ 
